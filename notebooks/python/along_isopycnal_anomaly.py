@@ -480,3 +480,66 @@ plt.savefig(
     dpi=600,
     bbox_inches="tight",
 )
+
+
+# %%
+def plot_climatology_depth(x, y, xlabel, ylabel) -> None:
+    """Helper function to plot climatology data."""
+    fig, ax = plt.subplots()
+    ax.set_prop_cycle(cycler("color", cm.viridis(np.linspace(0, 1, 12))))  # type: ignore
+    for i in range(12):
+        ax.plot(x[i], y, label=calendar.month_name[i + 1])
+    x_mean = np.mean(x, axis=0)
+    ax.plot(x_mean, y, color="k", label="Mean", linewidth=2)
+    ax.legend()
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+
+# %%
+plot_climatology_depth(
+    offshore_anomaly_climatology["temperature"],
+    offshore_anomaly_climatology["depth"],
+    "Temperature Anomaly ($\\mathsf{\\degree C}$)",
+    "Depth (m)",
+)
+plt.savefig(
+    "../presentation/offshore_temperature_anomaly_depth.png",
+    dpi=600,
+    bbox_inches="tight",
+)
+
+# %%
+plot_climatology_depth(
+    offshore_anomaly_climatology["practical_salinity"],
+    offshore_anomaly_climatology["depth"],
+    "Salinity Anomaly ($\\mathsf{psu}$)",
+    "Depth (m)",
+)
+plt.savefig(
+    "../presentation/offshore_salinity_anomaly_depth.png", dpi=600, bbox_inches="tight"
+)
+
+# %%
+plot_climatology_depth(
+    offshore_anomaly_climatology["spice"],
+    offshore_anomaly_climatology["depth"],
+    "Spice Anomaly ($\\mathsf{kg/m^3}$)",
+    "Depth (m)",
+)
+plt.savefig(
+    "../presentation/offshore_spice_anomaly_depth.png", dpi=600, bbox_inches="tight"
+)
+
+# %%
+plot_climatology_depth(
+    offshore_anomaly_climatology["oxygen"],
+    offshore_anomaly_climatology["depth"],
+    "Dissolved Oxygen Anomaly ($\\mathsf{\\mu mol/kg}$)",
+    "Depth (m)",
+)
+plt.savefig(
+    "../presentation/offshore_oxygen_anomaly_depth.png", dpi=600, bbox_inches="tight"
+)
+
+# %%
