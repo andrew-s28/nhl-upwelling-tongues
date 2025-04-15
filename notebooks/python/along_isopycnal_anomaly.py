@@ -23,11 +23,13 @@ import calendar
 from pathlib import Path
 
 import gsw
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import requests
 import xarray as xr
 from cycler import cycler
+from numpy.typing import NDArray
 from scipy.signal import find_peaks
 from tqdm import tqdm
 from xarray.groupers import BinGrouper
@@ -61,7 +63,7 @@ def split_profiles_by_peaks(ds: xr.Dataset, **kwargs) -> list[xr.Dataset]:
 
 def profiler_binning(
     ds: xr.Dataset,
-    z_bins: np.array,
+    z_bins: NDArray[np.float64] | NDArray[np.int_],
     z_lab: str = "depth",
     t_lab: str = "time",
     offset: float = 0.5,
@@ -96,14 +98,14 @@ def profiler_binning(
     z_centers = np.diff(z_bins) / 2 + z_bins[:-1]  # bin centers
     ds = ds.groupby(
         {
-            f"{t_lab}": BinGrouper(bins=time_bins, labels=time_centers),
+            f"{t_lab}": BinGrouper(bins=time_bins.values, labels=time_centers),
             f"{z_lab}": BinGrouper(bins=z_bins, labels=z_centers),
         }
     ).mean()
     return ds
 
 
-def download_ooi_errdap(site: str, refdes: str, delete_existing: bool = False) -> None:
+def download_ooi_errdap(site: str, refdes: str, delete_existing: bool = False) -> Path:
     directory = Path("../data")
     requested_file_name = f"{site.lower()}-{refdes.lower()}.nc"
     url = f"https://erddap.dataexplorer.oceanobservatories.org/erddap/tabledap/ooi-{requested_file_name}"
@@ -182,6 +184,7 @@ def qc(ds: xr.Dataset) -> xr.Dataset:
 
 
 # %%
+# only qc if the dataset is not present to save time
 if Path("../data/slope_base_qced.nc").is_file():
     slope_base = xr.open_dataset("../data/slope_base_qced.nc")
 else:
@@ -227,6 +230,7 @@ plt.xlim(np.datetime64("2019-03-17"), np.datetime64("2019-03-18"))
 # Next, we bin the slope base profiler data in preparation of computing monthly climatologies and the long-term mean.
 
 # %%
+# only bin if the dataset is not present to save time
 if Path("../data/slope_base_binned.nc").is_file():
     slope_base_binned = xr.open_dataset("../data/slope_base_binned.nc")
 else:
@@ -251,14 +255,16 @@ slope_base_climatology
 
 
 # %%
-def plot_climatology(x, y, xlabel, ylabel):
+def plot_climatology(x, y, xlabel, ylabel) -> None:
+    """Helper function to plot climatology data."""
     fig, ax = plt.subplots()
-    ax.set_prop_cycle(cycler("color", plt.cm.viridis(np.linspace(0, 1, 12))))
+    ax.set_prop_cycle(cycler("color", cm.viridis(np.linspace(0, 1, 12))))  # type: ignore
     for i in range(12):
         ax.plot(x[i], y[i], label=calendar.month_name[i + 1])
     x_mean = np.mean(x, axis=0)
     y_mean = np.mean(y, axis=0)
     ax.plot(x_mean, y_mean, color="k", label="Mean", linewidth=2)
+    ax.set_ylim(24.25, 26.75)
     ax.legend()
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -315,6 +321,7 @@ slope_base_mean = slope_base_binned.mean(dim="time")
 # Assuming that the slope base site is representative of the conditions of the open ocean, we now subtract the temperature, salinity, spice, and oxygen data of the slope base profiler from the offshore profiler. This subtraction is performed along isopycnals, meaning that first we linearly interpolate the mean slope base climatologies as a function of potential density anomaly, and apply these interpolations to each of the potential density measurements from the offshore profiler. These interpolated water properties are then subtracted from each of the measurements at the offshore site to obtain an along-isopycnal anomaly relative to the slope base site. Finally, the along-isopycnal anomaly offshore data is binned and plotted as for the slope base profiler above.
 
 # %%
+# get rid of any nans which break the interpolationa
 slope_base_mean = slope_base_mean.where(
     (~np.isnan(slope_base_mean["temperature"]))
     & (~np.isnan(slope_base_mean["practical_salinity"]))
@@ -323,36 +330,87 @@ slope_base_mean = slope_base_mean.where(
     & (~np.isnan(slope_base_mean["spice"])),
     drop=True,
 )
+# interpolation must be sorted or else it quietly breaks
+idx = np.argsort(slope_base_mean["potential_density_anomaly"].values)
+slope_base_mean = slope_base_mean.isel(depth=idx)
 
 # %%
+# interpolation of offshore temp, salinity, spice, and oxygen based on potential density surface
+# to disable extrapolation, set right and left to a very large number and nan out afterwards
+# setting right and left directly to nan breaks the interpolation function entirely
 temp_interp = np.interp(
     offshore["potential_density_anomaly"],
     slope_base_mean["potential_density_anomaly"],
     slope_base_mean["temperature"],
+    right=1e10,
+    left=1e10,
 )
+temp_interp[temp_interp > 1e9] = np.nan
 sal_interp = np.interp(
     offshore["potential_density_anomaly"],
     slope_base_mean["potential_density_anomaly"],
     slope_base_mean["practical_salinity"],
+    right=1e10,
+    left=1e10,
 )
+sal_interp[sal_interp > 1e9] = np.nan
 spice_interp = np.interp(
     offshore["potential_density_anomaly"],
     slope_base_mean["potential_density_anomaly"],
     slope_base_mean["spice"],
+    right=1e10,
+    left=1e10,
 )
+spice_interp[spice_interp > 1e9] = np.nan
 oxy_interp = np.interp(
     offshore["potential_density_anomaly"],
     slope_base_mean["potential_density_anomaly"],
     slope_base_mean["oxygen"],
+    right=1e10,
+    left=1e10,
 )
+oxy_interp[oxy_interp > 1e9] = np.nan
+dens_interp = np.interp(
+    offshore["potential_density_anomaly"],
+    slope_base_mean["potential_density_anomaly"],
+    slope_base_mean["potential_density_anomaly"],
+    right=1e10,
+    left=1e10,
+)
+dens_interp[dens_interp > 1e9] = np.nan
 
 # %%
 offshore_anomaly = offshore.copy()
-offshore_anomaly["temperature"] = offshore["temperature"] - temp_interp
-offshore_anomaly["practical_salinity"] = offshore["practical_salinity"] - sal_interp
-offshore_anomaly["spice"] = offshore["spice"] - spice_interp
-offshore_anomaly["oxygen"] = offshore["oxygen"] - oxy_interp
-# offshore_anomaly["potential_density_anomaly"] = offshore["potential_density_anomaly"] - offshore["potential_density_anomaly"].mean(dim="time")
+offshore_anomaly["temperature"] = offshore_anomaly["temperature"] - temp_interp
+offshore_anomaly["practical_salinity"] = (
+    offshore_anomaly["practical_salinity"] - sal_interp
+)
+offshore_anomaly["spice"] = offshore_anomaly["spice"] - spice_interp
+offshore_anomaly["oxygen"] = offshore_anomaly["oxygen"] - oxy_interp
+offshore_anomaly["potential_density_anomaly_interp_test"] = (
+    offshore_anomaly["potential_density_anomaly"] - dens_interp
+)
+offshore_anomaly["potential_density_anomaly"] = offshore_anomaly[
+    "potential_density_anomaly"
+].where(
+    (~np.isnan(offshore_anomaly["temperature"]))
+    & (~np.isnan(offshore_anomaly["practical_salinity"]))
+    & (~np.isnan(offshore_anomaly["oxygen"]))
+    & (~np.isnan(offshore_anomaly["spice"])),
+    drop=True,
+)
+
+# %%
+offshore_peaks, _ = find_peaks(
+    x=-offshore_anomaly["z"], height=100, distance=100, prominence=100
+)
+plt.plot(
+    offshore_anomaly.isel(time=offshore_peaks)["time"],
+    -offshore_anomaly["z"].isel(time=offshore_peaks),
+    "o",
+)
+plt.plot(offshore_anomaly["time"], -offshore_anomaly["z"])
+plt.xlim(np.datetime64("2019-03-17"), np.datetime64("2019-03-18"))
 
 # %%
 offshore_anomaly_binned = profiler_binning(
@@ -411,3 +469,14 @@ plot_climatology(
 plt.savefig("../presentation/offshore_oxygen_anomaly.png", dpi=600, bbox_inches="tight")
 
 # %%
+plot_climatology(
+    offshore_anomaly_climatology["potential_density_anomaly_interp_test"],
+    offshore_anomaly_climatology["potential_density_anomaly"],
+    "Potential Density Along-Isopycnal Anomaly ($\\mathsf{\\mu mol/kg}$)",
+    "Potential Density Anomaly ($\\mathsf{kg/m^3}$)",
+)
+plt.savefig(
+    "../presentation/offshore_potential_density_anomaly.png",
+    dpi=600,
+    bbox_inches="tight",
+)
